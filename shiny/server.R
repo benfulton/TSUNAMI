@@ -18,6 +18,7 @@ library(survival)
 library(naturalsort)
 library(shinyWidgets)
 library(progress)
+library(tictoc)
 # circos plot
 library(circlize)
 # library(topGO) # Somehow conflict with WGCNA and GEOquery. Deprecated.
@@ -32,7 +33,7 @@ source("utils.R")
 setClass("QCMObject", representation(clusters.id = "list", clusters.names = "list",
                                      eigengene.matrix = "data.frame"))
 # listEnrichrDbs()
-path2TCGAdata <<- "http://web.ics.purdue.edu/~huang898/TSUNAMI_data/20190303_TCGA_gdac_mRNAseq/"
+path2TCGAdata <<- Sys.getenv('DATAPATH')
 enrichr_dbs <<- c("GO_Biological_Process_2018",
                  "GO_Molecular_Function_2018",
                  "GO_Cellular_Component_2018",
@@ -52,7 +53,6 @@ TCGA.gdac.list <<- read.csv("./data/TCGA_gdac_metadata.csv", header = T)
 server <- function(input, output, session) {
   
   data <- reactiveVal(0)
-  data_final <- reactiveVal(0)
   GEO <- reactiveVal(0)
   GSE_name_title <- reactiveVal(0)
   mygset <- reactiveVal(0)
@@ -132,7 +132,7 @@ observeEvent(input$dataset_lastClickId_mytable0,{
     cancer.name = TCGA.gdac.list[row_of_TCGA,2]
     smartModal(error=F, title = sprintf("Loading TCGA %s Data", cancer.name),
                content = sprintf("Loading TCGA %s Data ...", cancer.name))
-    load(url(paste0(path2TCGAdata, cancer.name, ".Rdata")))
+    load(paste0(path2TCGAdata, cancer.name, ".Rdata"))
     TCGA.mRNAseq = data.frame(cbind(rownames(TCGA.mRNAseq), TCGA.mRNAseq))
     colnames(TCGA.mRNAseq)[1] = "Gene"
     data(TCGA.mRNAseq)
@@ -463,7 +463,8 @@ observeEvent(input$action2,{
         RNA = RNA[, colnames(RNA) %in% input$data_sample_subgroup]
       }
       print(dim(RNA))
-      
+
+      tic('Preprocessing input data')      
       withProgress(message = 'Preprocessing input data', value = 0, {
       # Step 0
       # Increment the progress bar, and update the detail text.
@@ -478,8 +479,9 @@ observeEvent(input$action2,{
       geneID <- data.frame(rownames(RNA)[ifelse(is.na(input$starting_row),1,input$starting_row):dim(RNA)[1]])
       print(dim(RNA))
       print(dim(geneID))
+      toc()
       
-      
+      tic()
       # convert na to 0
       if (input$checkbox_NA){RNA[is.na(RNA)] <- 0}
 
@@ -501,9 +503,12 @@ observeEvent(input$action2,{
       
       print("after remove lowest k% mean exp value:")
       print(dim(RNA_filtered1))
+      toc()
+      
       incProgress(1/5, detail = "Remove lowest k% mean exp value")
       
       # Remove data with lowest 10% variance across samples
+      tic('Remove data with lowest 10% variance across samples')
       percentile <- ifelse(is.na(input$variance_expval),0,input$variance_expval)/100.
       percentile.var <- percentile
       print(sprintf("percentile 2: %f",percentile))
@@ -526,6 +531,7 @@ observeEvent(input$action2,{
       
       print("after remove lowest l% var exp value:")
       print(dim(RNA_filtered2))
+      toc()
       incProgress(1/5, detail = "Remove lowest l% var exp value")
 
       # expData <- RNA_filtered2
@@ -565,9 +571,9 @@ observeEvent(input$action2,{
         print(sprintf("data dimension after remove duplicated gene symbol: %d x %d",dim(tmpExp)[1],dim(tmpExp)[2]))
 
       }
-      
       incProgress(1/5, detail = "Sort genes based on mean.")
       
+      tic("Sort genes based on mean.")
       nSample <- ncol(tmpExp)
       res <- sort.int(rowMeans(tmpExp), decreasing = TRUE, index.return=TRUE)
       sortMean <- res$x
@@ -583,19 +589,22 @@ observeEvent(input$action2,{
       # save(finalExp, file = "~/Desktop/finalExp.Rdata")
       # save(finalSym, file = "~/Desktop/finalSym.Rdata")
       # save(finalSymChar, file = "~/Desktop/finalSymChar.Rdata")
+      toc()
       
       incProgress(1/5, detail = "\nPost-processing...")
       
-      data_final(data.frame(cbind(finalSym(), finalExp())))
-      data_final.temp <- data_final()
-      colnames(data_final.temp)[1] = "Gene_Symbol"
-      data_final(data_final.temp)
+      tic("Post-processing")
+      data_final = data.frame(cbind(finalSym(), finalExp()))
+      data_final_temp <- data_final
+      colnames(data_final_temp)[1] = "Gene_Symbol"
+      data_final = data_final_temp
       #finally no matter if just basic or advanced:
       sampleID(colnames(finalExp()))
       output$mytable_finaldata <- DT::renderDataTable({
-        DT::datatable(data_final(),
+        DT::datatable(data_final,
                       extensions = 'Responsive', escape=F, selection = 'none')
       })
+      toc()
       removeModal()
       }) # progress bar finished.
       
@@ -614,7 +623,6 @@ observeEvent(input$action2,{
                                     dim(RNA)[1], dim(RNA_filtered1)[1], percentile.mean*100, dim(RNA_filtered2)[1], percentile.var*100),
                      type = "success",
                      btn_labels = "OK", html = FALSE, closeOnClickOutside = TRUE)
-
       print('tab3')
       session$sendCustomMessage("download_finaldata_ready","-")
       session$sendCustomMessage("myCallbackHandler", "tab3")
@@ -651,9 +659,12 @@ observeEvent(input$action2,{
 #----------------------------------------------------------------------------
       withProgress(message = 'lmQCM [1/2]: ', value = 0, {
         incProgress(1/16, detail = "Calculating massive correlation coefficient matrix...")
+        tic("Calculating massive correlation coefficient matrix")
         cMatrix <- cor(t(data_in), method = CCmethod)
         diag(cMatrix) <- 0
+        toc()
         incProgress(1/2, detail = "Find the local maximal edges")
+        tic("Find the local maximal edges")
         if(normalization){
           # Normalization
           cMatrix <- abs(cMatrix)
@@ -669,6 +680,7 @@ observeEvent(input$action2,{
         maxV <- apply(cMatrix, 2, max)
         maxInd <- apply(cMatrix, 2, which.max) # several diferrences comparing with Matlab results
         
+        
         # Step 1 - find the local maximal edges
         lm.ind <- which(maxV == sapply(maxInd, function(x) max(cMatrix[x,])))
         maxEdges <- cbind(maxInd[lm.ind], lm.ind)
@@ -681,6 +693,7 @@ observeEvent(input$action2,{
         message(sprintf("Number of Maximum Edges: %d", length(sortMaxInd)))
         
         incProgress(7/16, detail = sprintf("Number of Maximum Edges: %d", length(sortMaxInd)))
+        toc()
         
         currentInit <- 1
         noNewInit <- 0
@@ -702,6 +715,7 @@ observeEvent(input$action2,{
         display_pct = TRUE, value = 0
       )
       
+      tic("Merging")
       while ((currentInit <= length(sortMaxInd)) & (noNewInit == 0)) {
         pb$tick()
         iter = iter + 1
@@ -745,6 +759,7 @@ observeEvent(input$action2,{
         }
         currentInit <- currentInit + 1
       }
+      toc()
       
       closeSweetAlert(session = session)
       sendSweetAlert(
@@ -764,6 +779,7 @@ observeEvent(input$action2,{
         clusters <- C
       }
       
+      tic('calculate eigengene')
       # map rownames to clusters
       clusters.names = list()
       for (i in 1:length(clusters)){
@@ -790,13 +806,14 @@ observeEvent(input$action2,{
                                 eigengene.matrix = eigengene.matrix)
       
       message("Done.")
+      toc()
       
 #----------------------------------------------------------------------------
 # lmQCM finished
 #----------------------------------------------------------------------------
         
         
-        
+      tic('Finalizing')  
       # if("try-error" %in% class(t)) {
       #   removeModal()
       #   smartModal(error=T, title = "Error in lmQCM",
@@ -811,8 +828,6 @@ observeEvent(input$action2,{
       for (i in 1:(length(mergedCluster))) {
         vector <- as.matrix(mergedCluster[[i]])
         geneID <- vector
-        print(i)
-        print(vector)
         # ===== Calculate Eigengene Start
         X <- finalExp()[geneID,]
         mu <- rowMeans(X)
@@ -863,6 +878,7 @@ observeEvent(input$action2,{
         return(eigengene_matrix())
       },rownames = TRUE, colnames = TRUE, na = "", bordered = TRUE, digits = 4)
 
+      toc()
       removeModal()
       print('tab4')
       session$sendCustomMessage("download_cluster_ready","-")
