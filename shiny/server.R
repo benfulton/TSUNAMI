@@ -50,6 +50,30 @@ enrichr_dbs <<- c("GO_Biological_Process_2018",
                  "ChEA_2016")
 TCGA.gdac.list <<- read.csv("./data/TCGA_gdac_metadata.csv", header = T)
 
+add <- function(a,b) {
+  a+b
+}
+
+build_rna <- function(data, data_sample_subgroup, starting_row, starting_col) {
+  tic("build_rna")
+  RNA = data
+  if(!is.null(data_sample_subgroup)){
+    RNA = RNA[, colnames(RNA) %in% data_sample_subgroup]
+  }
+  print(dim(RNA))
+  
+  if(!is.null(data_sample_subgroup)){
+    RNA <- as.matrix(RNA[ifelse(is.na(starting_row),1,starting_row):dim(RNA)[1],])
+  } else{
+    RNA <- as.matrix(RNA[ifelse(is.na(starting_row),1,starting_row):dim(RNA)[1], ifelse(is.na(starting_col),2,starting_col):dim(RNA)[2]])
+  }
+  class(RNA) <- "numeric"
+  
+  toc()
+  
+  RNA  
+}
+
 server <- function(input, output, session) {
   
   data <- reactiveVal(0)
@@ -269,7 +293,6 @@ output$readingcsv <- reactive({
   return(is.null(input$csvfile))
 })
 
-
 observeEvent(input$action2,{
   options(stringsAsFactors = FALSE)
     if(is.null(input$csvfile)){
@@ -458,30 +481,16 @@ observeEvent(input$action2,{
       }
       smartModal(error=F, title = "Preprocessing input data", content = "Preprocessing ...")
       
-      RNA = data()
-      if(!is.null(input$data_sample_subgroup)){
-        RNA = RNA[, colnames(RNA) %in% input$data_sample_subgroup]
-      }
-      print(dim(RNA))
-
-      tic('Preprocessing input data')      
       withProgress(message = 'Preprocessing input data', value = 0, {
-      # Step 0
+        # Step 0
       # Increment the progress bar, and update the detail text.
       incProgress(1/5, detail = "Parsing Input Data")
         
-      if(!is.null(input$data_sample_subgroup)){
-        RNA <- as.matrix(RNA[ifelse(is.na(input$starting_row),1,input$starting_row):dim(RNA)[1],])
-      } else{
-        RNA <- as.matrix(RNA[ifelse(is.na(input$starting_row),1,input$starting_row):dim(RNA)[1], ifelse(is.na(input$starting_col),2,input$starting_col):dim(RNA)[2]])
-      }
-      class(RNA) <- "numeric"
+      RNA = build_rna(data(), input$data_sample_subgroup, input$starting_row, input$starting_col)
       geneID <- data.frame(rownames(RNA)[ifelse(is.na(input$starting_row),1,input$starting_row):dim(RNA)[1]])
       print(dim(RNA))
       print(dim(geneID))
-      toc()
-      
-      tic()
+
       # convert na to 0
       if (input$checkbox_NA){RNA[is.na(RNA)] <- 0}
 
@@ -503,8 +512,7 @@ observeEvent(input$action2,{
       
       print("after remove lowest k% mean exp value:")
       print(dim(RNA_filtered1))
-      toc()
-      
+
       incProgress(1/5, detail = "Remove lowest k% mean exp value")
       
       # Remove data with lowest 10% variance across samples
