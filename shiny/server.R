@@ -601,12 +601,17 @@ observeEvent(input$action2,{
       
       incProgress(1/5, detail = "\nPost-processing...")
       
-      tic("Post-processing")
-      data_final = data.frame(cbind(finalSym(), finalExp()))
+      tic("cbinding genes and expression")
+      x = cbind(uniGene[sortInd], tmpExp[sortInd, ])
+      toc()
+      tic('building data frame')
+      data_final = data.frame(x)
       data_final_temp <- data_final
       colnames(data_final_temp)[1] = "Gene_Symbol"
       data_final = data_final_temp
       #finally no matter if just basic or advanced:
+      toc()
+      tic("Sample ID")
       sampleID(colnames(finalExp()))
       output$mytable_finaldata <- DT::renderDataTable({
         DT::datatable(data_final,
